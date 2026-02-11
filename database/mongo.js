@@ -1,14 +1,18 @@
 const { MongoClient } = require("mongodb")
 
-const uri = process.env.MONGO_URI
 const dbName = process.env.DB_NAME || "dezire_store"
 
-const client = new MongoClient(uri)
-
+let client
 let db
 
 async function connectDB() {
   try {
+    const uri = process.env.MONGO_URI || process.env.MONGODB_URI
+    if (!uri) {
+      throw new Error("MONGO_URI (or MONGODB_URI) is not set")
+    }
+
+    client = new MongoClient(uri)
     await client.connect()
     db = client.db(dbName)
 
@@ -28,4 +32,10 @@ function getDB() {
   return db
 }
 
-module.exports = { connectDB, getDB, client }
+async function closeDB() {
+  if (client) {
+    await client.close()
+  }
+}
+
+module.exports = { connectDB, getDB, closeDB }

@@ -5,7 +5,7 @@ const session = require("express-session")
 const bcrypt = require("bcrypt")
 const path = require("path")
 
-const { connectDB, getDB, client } = require("./database/mongo")
+const { connectDB, getDB, closeDB } = require("./database/mongo")
 
 const authRouter = require("./routes/auth")
 const productsRouter = require("./routes/products")
@@ -72,7 +72,7 @@ async function ensureAdmin() {
   })
 
   process.on("SIGINT", async () => {
-    await client.close()
+    await closeDB()
     process.exit(0)
   })
 })()
