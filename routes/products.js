@@ -5,43 +5,39 @@ const { getDB } = require("../database/mongo")
 const router = express.Router()
 
 function requireAuth(req, res, next) {
-  if (!req.session || !req.session.userId) {
+  if (!req.session?.userId)
     return res.status(401).json({ error: "Unauthorized" })
-  }
   next()
 }
 
 function requireRole(role) {
   return (req, res, next) => {
-    if (req.session.role !== role) {
+    if (req.session.role !== role)
       return res.status(403).json({ error: "Forbidden" })
-    }
     next()
   }
 }
 
 async function requireOwnerOrAdmin(req, res, next) {
-  const db = getDB()
+  if (!ObjectId.isValid(req.params.id))
+    return res.status(400).json({ error: "Invalid id" })
 
+  const db = getDB()
   const product = await db.collection("products").findOne({
     _id: new ObjectId(req.params.id),
   })
 
-  if (!product) {
-    return res.status(404).json({ error: "Product not found" })
-  }
+  if (!product)
+    return res.status(404).json({ error: "Not found" })
 
   const isOwner = product.ownerId === req.session.userId
   const isAdmin = req.session.role === "admin"
 
-  if (!isOwner && !isAdmin) {
+  if (!isOwner && !isAdmin)
     return res.status(403).json({ error: "Forbidden" })
-  }
 
   next()
 }
-
-/* ---------- GET with pagination ---------- */
 
 router.get("/", async (req, res) => {
   const db = getDB()
@@ -50,16 +46,11 @@ router.get("/", async (req, res) => {
   const limit = Number(req.query.limit || 10)
   const skip = (page - 1) * limit
 
-  const filter = {}
-  if (req.query.category) {
-    filter.category = req.query.category
-  }
+  const total = await db.collection("products").countDocuments()
 
-  const total = await db.collection("products").countDocuments(filter)
-
-  const products = await db
+  const items = await db
     .collection("products")
-    .find(filter)
+    .find()
     .skip(skip)
     .limit(limit)
     .toArray()
@@ -68,35 +59,19 @@ router.get("/", async (req, res) => {
     page,
     total,
     pages: Math.ceil(total / limit),
-    items: products,
+    items,
   })
-})
-
-router.get("/:id", async (req, res) => {
-  const db = getDB()
-
-  const product = await db.collection("products").findOne({
-    _id: new ObjectId(req.params.id),
-  })
-
-  if (!product) {
-    return res.status(404).json({ error: "Product not found" })
-  }
-
-  res.json(product)
 })
 
 router.post("/", requireAuth, async (req, res) => {
   const { name, price, category, image, description } = req.body
 
-  if (!name || price == null) {
-    return res.status(400).json({ error: "Name and price required" })
-  }
+  if (typeof name !== "string" || name.trim().length < 2)
+    return res.status(400).json({ error: "Invalid name" })
 
   const numericPrice = Number(price)
-  if (Number.isNaN(numericPrice)) {
-    return res.status(400).json({ error: "Price must be number" })
-  }
+  if (numericPrice <= 0)
+    return res.status(400).json({ error: "Invalid price" })
 
   const db = getDB()
 
@@ -110,36 +85,27 @@ router.post("/", requireAuth, async (req, res) => {
     createdAt: new Date(),
   })
 
-  const created = await db
-    .collection("products")
-    .findOne({ _id: result.insertedId })
-
-  res.status(201).json(created)
+  res.status(201).json({ _id: result.insertedId })
 })
 
 router.put("/:id", requireAuth, requireOwnerOrAdmin, async (req, res) => {
-  const { name, price, category, image, description } = req.body
-
-  const numericPrice = Number(price)
-
   const db = getDB()
 
-  const result = await db.collection("products").findOneAndUpdate(
+  await db.collection("products").updateOne(
     { _id: new ObjectId(req.params.id) },
     {
       $set: {
-        name,
-        price: numericPrice,
-        category,
-        image,
-        description,
+        name: req.body.name,
+        price: Number(req.body.price),
+        category: req.body.category,
+        image: req.body.image,
+        description: req.body.description,
         updatedAt: new Date(),
       },
-    },
-    { returnDocument: "after" }
+    }
   )
 
-  res.json(result.value)
+  res.json({ message: "Updated" })
 })
 
 router.delete("/:id", requireAuth, requireOwnerOrAdmin, async (req, res) => {
@@ -149,7 +115,7 @@ router.delete("/:id", requireAuth, requireOwnerOrAdmin, async (req, res) => {
     _id: new ObjectId(req.params.id),
   })
 
-  res.json({ message: "Deleted successfully" })
+  res.json({ message: "Deleted" })
 })
 
 router.get(
@@ -158,6 +124,7 @@ router.get(
   requireRole("admin"),
   async (req, res) => {
     const db = getDB()
+
     const totalProducts = await db.collection("products").countDocuments()
     const totalUsers = await db.collection("users").countDocuments()
 

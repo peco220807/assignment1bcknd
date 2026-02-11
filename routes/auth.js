@@ -5,28 +5,23 @@ const { getDB } = require("../database/mongo")
 const router = express.Router()
 
 router.post("/register", async (req, res) => {
-  const { email, password } = req.body || {}
+  const { email, password } = req.body
 
-  if (!email || !password) {
+  if (!email || !password)
     return res.status(400).json({ error: "Email and password required" })
-  }
 
   const db = getDB()
   const users = db.collection("users")
 
-  const exists = await users.findOne({
-    email: String(email).toLowerCase().trim(),
-  })
-
-  if (exists) {
+  const exists = await users.findOne({ email: email.toLowerCase() })
+  if (exists)
     return res.status(400).json({ error: "User already exists" })
-  }
 
-  const passwordHash = await bcrypt.hash(password, 10)
+  const hash = await bcrypt.hash(password, 10)
 
   await users.insertOne({
-    email: String(email).toLowerCase().trim(),
-    passwordHash,
+    email: email.toLowerCase(),
+    passwordHash: hash,
     role: "user",
     createdAt: new Date(),
   })
@@ -35,31 +30,25 @@ router.post("/register", async (req, res) => {
 })
 
 router.post("/login", async (req, res) => {
-  const { email, password } = req.body || {}
-
-  if (!email || !password) {
-    return res.status(400).json({ error: "Email and password required" })
-  }
+  const { email, password } = req.body
 
   const db = getDB()
-  const user = await db.collection("users").findOne({
-    email: String(email).toLowerCase().trim(),
-  })
+  const user = await db
+    .collection("users")
+    .findOne({ email: email.toLowerCase() })
 
-  if (!user) return res.status(401).json({ error: "Invalid credentials" })
+  if (!user)
+    return res.status(401).json({ error: "Invalid credentials" })
 
-  const ok = await bcrypt.compare(password, user.passwordHash)
-  if (!ok) return res.status(401).json({ error: "Invalid credentials" })
+  const valid = await bcrypt.compare(password, user.passwordHash)
+  if (!valid)
+    return res.status(401).json({ error: "Invalid credentials" })
 
   req.session.userId = String(user._id)
   req.session.role = user.role
   req.session.email = user.email
 
-  res.json({
-    message: "Logged in",
-    email: user.email,
-    role: user.role,
-  })
+  res.json({ message: "Logged in", role: user.role })
 })
 
 router.post("/logout", (req, res) => {
@@ -70,9 +59,8 @@ router.post("/logout", (req, res) => {
 })
 
 router.get("/me", (req, res) => {
-  if (!req.session.userId) {
+  if (!req.session.userId)
     return res.json({ authenticated: false })
-  }
 
   res.json({
     authenticated: true,
