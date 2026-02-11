@@ -1,156 +1,168 @@
-const express = require("express");
-const { ObjectId } = require("mongodb");
-const { getDB } = require("../database/mongo");
-const router = express.Router();
+const express = require("express")
+const { ObjectId } = require("mongodb")
+const { getDB } = require("../database/mongo")
+
+const router = express.Router()
 
 function requireAuth(req, res, next) {
   if (!req.session || !req.session.userId) {
-    return res.status(401).json({ error: "Unauthorized" });
+    return res.status(401).json({ error: "Unauthorized" })
   }
-  next();
+  next()
 }
 
-function isValidObjectId(id) {
-  return ObjectId.isValid(id) && String(new ObjectId(id)) === id;
+function requireRole(role) {
+  return (req, res, next) => {
+    if (req.session.role !== role) {
+      return res.status(403).json({ error: "Forbidden" })
+    }
+    next()
+  }
 }
+
+async function requireOwnerOrAdmin(req, res, next) {
+  const db = getDB()
+
+  const product = await db.collection("products").findOne({
+    _id: new ObjectId(req.params.id),
+  })
+
+  if (!product) {
+    return res.status(404).json({ error: "Product not found" })
+  }
+
+  const isOwner = product.ownerId === req.session.userId
+  const isAdmin = req.session.role === "admin"
+
+  if (!isOwner && !isAdmin) {
+    return res.status(403).json({ error: "Forbidden" })
+  }
+
+  next()
+}
+
+/* ---------- GET with pagination ---------- */
 
 router.get("/", async (req, res) => {
-  try {
-    const db = getDB();
-    const products = await db.collection("products").find().toArray();
-    res.json(products);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server error" });
+  const db = getDB()
+
+  const page = Number(req.query.page || 1)
+  const limit = Number(req.query.limit || 10)
+  const skip = (page - 1) * limit
+
+  const filter = {}
+  if (req.query.category) {
+    filter.category = req.query.category
   }
-});
+
+  const total = await db.collection("products").countDocuments(filter)
+
+  const products = await db
+    .collection("products")
+    .find(filter)
+    .skip(skip)
+    .limit(limit)
+    .toArray()
+
+  res.json({
+    page,
+    total,
+    pages: Math.ceil(total / limit),
+    items: products,
+  })
+})
 
 router.get("/:id", async (req, res) => {
-  const { id } = req.params;
+  const db = getDB()
 
-  if (!isValidObjectId(id)) {
-    return res.status(400).json({ error: "Invalid id" });
+  const product = await db.collection("products").findOne({
+    _id: new ObjectId(req.params.id),
+  })
+
+  if (!product) {
+    return res.status(404).json({ error: "Product not found" })
   }
 
-  try {
-    const db = getDB();
-    const product = await db
-      .collection("products")
-      .findOne({ _id: new ObjectId(id) });
-
-    if (!product) {
-      return res.status(404).json({ error: "Product not found" });
-    }
-
-    res.json(product);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
+  res.json(product)
+})
 
 router.post("/", requireAuth, async (req, res) => {
-  const { name, price, category, image, description } = req.body;
+  const { name, price, category, image, description } = req.body
 
   if (!name || price == null) {
-    return res.status(400).json({ error: "Name and price required" });
+    return res.status(400).json({ error: "Name and price required" })
   }
 
-  const numericPrice = Number(price);
+  const numericPrice = Number(price)
   if (Number.isNaN(numericPrice)) {
-    return res.status(400).json({ error: "Price must be number" });
+    return res.status(400).json({ error: "Price must be number" })
   }
 
-  try {
-    const db = getDB();
-    const result = await db.collection("products").insertOne({
-      name: name.trim(),
-      price: numericPrice,
-      category: category || null,
-      image: image || null,
-      description: description || null,
-      createdAt: new Date(),
-    });
+  const db = getDB()
 
-    const created = await db
-      .collection("products")
-      .findOne({ _id: result.insertedId });
+  const result = await db.collection("products").insertOne({
+    name: name.trim(),
+    price: numericPrice,
+    category: category || null,
+    image: image || null,
+    description: description || null,
+    ownerId: req.session.userId,
+    createdAt: new Date(),
+  })
 
-    res.status(201).json(created);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
+  const created = await db
+    .collection("products")
+    .findOne({ _id: result.insertedId })
 
-router.put("/:id", requireAuth, async (req, res) => {
-  const { id } = req.params;
+  res.status(201).json(created)
+})
 
-  if (!isValidObjectId(id)) {
-    return res.status(400).json({ error: "Invalid id" });
-  }
+router.put("/:id", requireAuth, requireOwnerOrAdmin, async (req, res) => {
+  const { name, price, category, image, description } = req.body
 
-  const { name, price, category, image, description } = req.body;
+  const numericPrice = Number(price)
 
-  if (!name || price == null) {
-    return res.status(400).json({ error: "Name and price required" });
-  }
+  const db = getDB()
 
-  const numericPrice = Number(price);
-  if (Number.isNaN(numericPrice)) {
-    return res.status(400).json({ error: "Price must be number" });
-  }
-
-  try {
-    const db = getDB();
-    const result = await db.collection("products").findOneAndUpdate(
-      { _id: new ObjectId(id) },
-      {
-        $set: {
-          name: name.trim(),
-          price: numericPrice,
-          category: category || null,
-          image: image || null,
-          description: description || null,
-          updatedAt: new Date(),
-        },
+  const result = await db.collection("products").findOneAndUpdate(
+    { _id: new ObjectId(req.params.id) },
+    {
+      $set: {
+        name,
+        price: numericPrice,
+        category,
+        image,
+        description,
+        updatedAt: new Date(),
       },
-      { returnDocument: "after" }
-    );
+    },
+    { returnDocument: "after" }
+  )
 
-    if (!result.value) {
-      return res.status(404).json({ error: "Product not found" });
-    }
+  res.json(result.value)
+})
 
-    res.json(result.value);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server error" });
+router.delete("/:id", requireAuth, requireOwnerOrAdmin, async (req, res) => {
+  const db = getDB()
+
+  await db.collection("products").deleteOne({
+    _id: new ObjectId(req.params.id),
+  })
+
+  res.json({ message: "Deleted successfully" })
+})
+
+router.get(
+  "/admin/stats",
+  requireAuth,
+  requireRole("admin"),
+  async (req, res) => {
+    const db = getDB()
+    const totalProducts = await db.collection("products").countDocuments()
+    const totalUsers = await db.collection("users").countDocuments()
+
+    res.json({ totalProducts, totalUsers })
   }
-});
+)
 
-router.delete("/:id", requireAuth, async (req, res) => {
-  const { id } = req.params;
-
-  if (!isValidObjectId(id)) {
-    return res.status(400).json({ error: "Invalid id" });
-  }
-
-  try {
-    const db = getDB();
-    const result = await db
-      .collection("products")
-      .findOneAndDelete({ _id: new ObjectId(id) });
-
-    if (!result.value) {
-      return res.status(404).json({ error: "Product not found" });
-    }
-
-    res.json({ message: "Deleted successfully" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-module.exports = router;
+module.exports = router
